@@ -383,3 +383,272 @@ df_resumen_con_port %>% ggplot() +
   ylab("Media") +
   theme_light() +
   theme(legend.position = "none")
+
+
+#_______________________________________________________________________________
+
+#Regresión PCA
+
+library(pls)
+
+#Se crea un dataset separando la variable respuesta y usando las otras como predictores:
+  
+#Se crea un nuevo dataframe para la regresión
+datos_pcr <- df_rendimientos
+
+#Variable respuesta
+Y <- datos_pcr$rendimiento_1
+
+#Variables predictoras (todas excepto la primera)
+X <- datos_pcr %>% dplyr::select(-rendimiento_1)
+
+#Se combina en un solo dataframe
+df_modelo <- data.frame(Y, X)
+
+#Se ajusta el modelo PCR
+
+set.seed(123)
+
+modelo_pcr <- pcr(Y ~ ., data = df_modelo, scale = TRUE, validation = "CV")
+
+summary(modelo_pcr)
+
+#Visualización de validación cruzada
+
+validationplot(modelo_pcr, val.type = "RMSEP")  # RMSE
+
+validationplot(modelo_pcr, val.type = "R2")     # R-cuadrada
+
+# División 80% entrenamiento, 20% prueba
+
+n <- nrow(df_modelo)
+train_idx <- sample(1:n, size = round(0.8 * n))
+
+train_data <- df_modelo[train_idx, ]
+test_data <- df_modelo[-train_idx, ]
+
+#Se ajusta el modelo en el conjunto de entrenamiento
+modelo_pcr_train <- pcr(Y ~ ., data = train_data, scale = TRUE, validation = "CV")
+
+# Predecir en el conjunto de prueba usando 7 componentes 
+predicciones <- predict(modelo_pcr_train, test_data, ncomp = 7)
+
+# Calcular RMSE en prueba
+rmse <- sqrt(mean((test_data$Y - predicciones)^2))
+rmse
+
+#_______________________________________________________________________________
+
+#Normalización explícita (z-score) antes del PCR
+
+library(caret)  # para preProcess
+
+# Normalizar todos los rendimientos
+preproc <- preProcess(df_rendimientos, method = c("center", "scale"))
+rendimientos_norm <- predict(preproc, df_rendimientos)
+
+
+#Se ajusta el modelo con todos los componentes
+
+modelo_completo <- pcr(rendimiento_1 ~ ., 
+                       data = cbind(rendimientos_norm[, -1], rendimiento_1 = rendimientos_norm$rendimiento_1), 
+                       scale = FALSE,
+                       validation = "CV")
+#Se extraen predicciones como arreglo 3D para todas las componentes
+
+  # Predicciones para todas las componentes
+predicciones_array <- predict(modelo_completo, newdata = rendimientos_norm[, -1])
+dim(predicciones_array)  # [n, 1, ncomp]
+
+  # Extracción de predicción usando 7 componentes
+pred_pcr_8 <- predicciones_array[ , 1, 8]
+
+
+#Se compara el modelo manual usando la fórmula y = X\beta
+
+  #PCA manual
+pca <- prcomp(rendimientos_norm[, -1], center = FALSE, scale. = FALSE)
+scores <- pca$x[, 1:8]  # si decides usar 8 PCs
+
+  #Se ajusta la regresión lineal sobre los scores
+modelo_manual <- lm(rendimientos_norm$rendimiento_1 ~ scores)
+
+  #Se obtiene predicción: y = X\beta
+beta_X <- coef(modelo_manual)[-1]
+X_pca <- as.matrix(scores)
+y_pred_manual <- X_pca %*% beta_X + coef(modelo_manual)[1]
+
+#Comparación entre ambas predicciones
+
+#Visualmente
+plot(pred_pcr_8, y_pred_manual,
+     xlab = "Predicción (PCR paquete)",
+     ylab = "Predicción (manual)",
+     main = "Comparación de predicciones")
+abline(0, 1, col = "blue", lty = 2)
+
+# Visualiza el error cuadrático medio de predicción (RMSEP)
+validationplot(modelo_completo, val.type = "RMSEP", cex.axis = 0.7)
+abline(v = 8, col = "blue", lty = 3)  # si 8 es el óptimo
+
+#Automatización de la elección del número óptimo de componentes
+
+errores <- RMSEP(modelo_completo)$val[1, 1, ]
+optimo <- which.min(errores)
+cat("El número óptimo de componentes es:", optimo, "\n")
+
+
+#______________________________________________________________________________
+
+#Librerías
+library(pls)
+library(dplyr)
+library(caret)
+
+#Usando la matriz de rendimientos: df_rendimientos
+
+#Normalización de datos
+preproc <- preProcess(df_rendimientos, method = c("center", "scale"))
+rendimientos_norm <- predict(preproc, df_rendimientos)
+
+#Se define la variable respuesta y predictores
+Y <- rendimientos_norm$rendimiento_1
+X <- rendimientos_norm %>% dplyr::select(-rendimiento_1)
+df_modelo <- data.frame(Y, X)
+
+#Se ajusta el modelo PCR con validación cruzada
+set.seed(123)
+modelo_pcr <- pcr(Y ~ ., data = df_modelo, scale = FALSE, validation = "CV")
+
+#Elección del número óptimo de componentes 
+rmse_cv <- RMSEP(modelo_pcr)$val["CV", 1, ]
+plot(rmse_cv, type = "b", pch = 16, col = "darkblue",
+     xlab = "Número de componentes", ylab = "RMSEP (CV)",
+     main = "Curva de validación cruzada")
+
+abline(v = which.min(rmse_cv), col = "red", lty = 2)
+points(which.min(rmse_cv), min(rmse_cv), col = "red", pch = 19)
+
+ncomp_optimo <- which.min(rmse_cv)
+
+cat("Número óptimo de componentes (mínimo visual RMSEP):", ncomp_optimo, "\n")
+
+#Separación del conjunto de entrenamiento y prueba
+n <- nrow(df_rendimientos)
+idx_train <- sample(1:n, size = floor(0.7 * n))  # 70% para entrenamiento
+train <- df_rendimientos[idx_train, ]
+test <- df_rendimientos[-idx_train, ]
+
+#Variable respuesta simulada: rendimiento_1
+y_train <- train$rendimiento_1
+y_test <- test$rendimiento_1
+
+#Matriz X de predictores (sin la variable respuesta)
+X_train <- train[, -1]
+X_test <- test[, -1]
+
+#Se vuelve a ajustar el modelo con datos de entrenamiento
+modelo_final <- pcr(y_train ~ ., data = X_train, scale = TRUE, validation = "CV")
+
+#Se usa el número óptimo de componentes encontrado antes
+predicciones <- predict(modelo_final, newdata = X_test, ncomp = ncomp_optimo)
+
+#Evaluación del modelo
+rmse_final <- sqrt(mean((y_test - predicciones)^2))
+cat("RMSE final con", ncomp_optimo, "componentes:", rmse_final, "\n")
+
+
+
+#_______________________________________________________________________________
+
+#Librerías
+library(pls)
+library(dplyr)
+library(caret)
+library(glmnet)
+
+#Normalización completa
+preproc <- preProcess(df_rendimientos, method = c("center", "scale"))
+rendimientos_norm <- predict(preproc, df_rendimientos)
+
+#División en entrenamiento y prueba
+set.seed(123)
+n <- nrow(rendimientos_norm)
+idx_train <- sample(1:n, size = floor(0.7 * n))
+train <- rendimientos_norm[idx_train, ]
+test <- rendimientos_norm[-idx_train, ]
+
+#Variables predictoras y respuesta
+y_train <- train$rendimiento_1
+y_test <- test$rendimiento_1
+X_train <- train %>% select(-rendimiento_1)
+X_test <- test %>% select(-rendimiento_1)
+
+#Ajuste PCR con validación cruzada y escalado interno
+df_train_pcr <- data.frame(y_train = y_train, X_train)
+modelo_pcr_train <- pcr(y_train ~ ., data = df_train_pcr, scale = TRUE, validation = "CV")
+
+#Elección del número óptimo de componentes (k)
+rmse_cv <- RMSEP(modelo_pcr)$val["CV", 1, ]
+plot(rmse_cv, type = "b", pch = 16, col = "darkblue",
+     xlab = "Número de componentes", ylab = "RMSEP (CV)",
+     main = "Curva de validación cruzada")
+
+abline(v = which.min(rmse_cv), col = "red", lty = 2)
+points(which.min(rmse_cv), min(rmse_cv), col = "red", pch = 19)
+
+ncomp_optimo <- which.min(rmse_cv)
+
+cat("Número óptimo de componentes (mínimo visual RMSEP):", ncomp_optimo, "\n")
+
+#Predicción usando PCR con el número óptimo de componentes
+pred_pcr <- predict(modelo_pcr_train, ncomp = ncomp_optimo, newdata = X_test)
+rmse_pcr <- sqrt(mean((y_test - pred_pcr)^2))
+cat("RMSE PCR con", ncomp_optimo, "componentes:", rmse_pcr, "\n")
+
+#Regresión ridge y lasso usando las primeras "k" componentes principales
+
+#Escalado de X_test con medias y desviaciones del entrenamiento PCR
+means <- attr(modelo_pcr_train$X, "scaled:center")
+sds <- attr(modelo_pcr_train$X, "scaled:scale")
+X_test_scaled <- scale(X_test, center = means, scale = sds)
+colnames(X_test_scaled) <- colnames(X_train)
+
+#Se obtienen los loadings para las "k" componentes óptimas
+loadings_pcr <- loadings(modelo_pcr_train)[, 1:ncomp_optimo]
+
+#Se asegura orden de variables entre loadings y X_test_scaled
+common_vars <- intersect(rownames(loadings_pcr), colnames(X_test_scaled))
+X_test_scaled <- X_test_scaled[, common_vars, drop = FALSE]
+loadings_pcr <- loadings_pcr[common_vars, , drop = FALSE]
+
+#Proyección del test en componentes principales
+scores_test <- as.matrix(X_test_scaled) %*% as.matrix(loadings_pcr)
+
+#Scores del entrenamiento para las mismas componentes
+scores_train <- scores(modelo_pcr_train)[, 1:ncomp_optimo]
+
+#Conversión a matrices para glmnet
+X_train_mat <- as.matrix(scores_train)
+X_test_mat <- as.matrix(scores_test)
+
+#Regresión Ridge
+cv_ridge <- cv.glmnet(X_train_mat, y_train, alpha = 0)
+best_lambda_ridge <- cv_ridge$lambda.min
+pred_ridge <- predict(cv_ridge, s = best_lambda_ridge, newx = X_test_mat)
+rmse_ridge <- sqrt(mean((y_test - pred_ridge)^2))
+cat("RMSE Ridge:", rmse_ridge, "\n")
+
+#Regresión Lasso
+cv_lasso <- cv.glmnet(X_train_mat, y_train, alpha = 1)
+best_lambda_lasso <- cv_lasso$lambda.min
+pred_lasso <- predict(cv_lasso, s = best_lambda_lasso, newx = X_test_mat)
+rmse_lasso <- sqrt(mean((y_test - pred_lasso)^2))
+cat("RMSE Lasso:", rmse_lasso, "\n")
+
+#Resultados
+
+cat("\n--- Comparación de modelos ---\n")
+cat("RMSE PCR:", round(rmse_pcr, 4), "\n")
+cat("RMSE Ridge:", round(rmse_ridge, 4), "\n")
+cat("RMSE Lasso:", round(rmse_lasso, 4), "\n")
