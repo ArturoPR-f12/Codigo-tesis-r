@@ -456,24 +456,24 @@ modelo_completo <- pcr(rendimiento_1 ~ .,
                        validation = "CV")
 #Se extraen predicciones como arreglo 3D para todas las componentes
 
-  # Predicciones para todas las componentes
+#Predicciones para todas las componentes
 predicciones_array <- predict(modelo_completo, newdata = rendimientos_norm[, -1])
 dim(predicciones_array)  # [n, 1, ncomp]
 
-  # Extracción de predicción usando 7 componentes
+#Extracción de predicción usando 7 componentes
 pred_pcr_8 <- predicciones_array[ , 1, 8]
 
 
 #Se compara el modelo manual usando la fórmula y = X\beta
 
-  #PCA manual
+#PCA manual
 pca <- prcomp(rendimientos_norm[, -1], center = FALSE, scale. = FALSE)
 scores <- pca$x[, 1:8]  # si decides usar 8 PCs
 
-  #Se ajusta la regresión lineal sobre los scores
+#Se ajusta la regresión lineal sobre los scores
 modelo_manual <- lm(rendimientos_norm$rendimiento_1 ~ scores)
 
-  #Se obtiene predicción: y = X\beta
+#Se obtiene predicción: y = X\beta
 beta_X <- coef(modelo_manual)[-1]
 X_pca <- as.matrix(scores)
 y_pred_manual <- X_pca %*% beta_X + coef(modelo_manual)[1]
@@ -557,6 +557,12 @@ predicciones <- predict(modelo_final, newdata = X_test, ncomp = ncomp_optimo)
 rmse_final <- sqrt(mean((y_test - predicciones)^2))
 cat("RMSE final con", ncomp_optimo, "componentes:", rmse_final, "\n")
 
+#Extraer los loadings del modelo
+loadings_pcr <- loadings(modelo_pcr)
+
+#Mostrar los loadings de los componentes utilizados
+cat("\nPonderaciones (loadings) de los primeros", ncomp_optimo, "componentes:\n")
+print(loadings_pcr[, 1:ncomp_optimo])
 
 
 #_______________________________________________________________________________
@@ -652,3 +658,7 @@ cat("\n--- Comparación de modelos ---\n")
 cat("RMSE PCR:", round(rmse_pcr, 4), "\n")
 cat("RMSE Ridge:", round(rmse_ridge, 4), "\n")
 cat("RMSE Lasso:", round(rmse_lasso, 4), "\n")
+
+
+#______________________________________________________________________________
+
