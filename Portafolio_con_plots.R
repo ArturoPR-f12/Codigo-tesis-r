@@ -498,3 +498,57 @@ ggplot(scores_pca, aes(x = PC1, y = PC2, color = cluster)) +
        y = eje_y_label) +
   theme_minimal() +
   theme(legend.position = "right")
+
+
+#Cluster 1:
+#Muchas de estas empresas (ALSEA, Liverpool, Chdraui, GENTERA) dependen de cuánto 
+#y cómo la gente elige gastar su dinero. No son productos esenciales, 
+#o bien están atados a crédito y confianza del consumidor.
+
+#A diferencia del clúster anterior, estas empresas sí dependen más del ritmo de 
+#la economía: si baja el ingreso o hay inflación, la gente va menos al restaurante, 
+#compra menos en Liverpool, o deja de pagar préstamos (GENTERA).
+
+#BOLSAA, GENTERA y Q enfrentan riesgos financieros y regulatorios más específicos 
+#(riesgo de crédito, tasas de interés, siniestros, regulaciones bursátiles), 
+#lo que puede provocar rendimientos que no se comportan como los de consumo básico.
+
+
+
+#Cluster 2:
+#BBAJIOO y GFNORTEO son instituciones financieras, por lo tanto comparten 
+#exposición a tasas de interés, ciclos crediticios, política monetaria, y riesgo sistémico.
+
+#Las tres empresas responden al entorno macroeconómico nacional: inflación, 
+#tasas, crecimiento económico.
+
+
+
+
+#Cluster 3: 
+#Son empresas que venden productos de consumo recurrente o necesario (alimentos, bebidas, higiene). 
+#La gente los compra incluso en recesión.
+#Muchas son típicamente etiquetadas como acciones defensivas. 
+#No dependen tanto del ciclo económico, lo que las hace más estables en rendimiento.
+
+
+
+#Cluster 4:
+
+#Muchas de estas empresas están ligadas a sectores intensivos en capital y 
+#altamente correlacionados con la actividad macroeconómica, como la construcción,
+#manufactura, infraestructura, logística o minería.
+
+#Varias de estas compañías tienen operaciones internacionales o ingresos en dólares 
+#(CEMEX, GCC, ORBIA, GMEXICO), lo cual introduce sensibilidad al tipo de cambio 
+#y ciclos internacionales.
+
+#Estos sectores tienden a mostrar mayor volatilidad en sus rendimientos, 
+#ya que dependen de factores como la inversión pública/privada, tasas de interés, 
+#precios de materias primas, demanda externa.
+
+
+
+
+
+
