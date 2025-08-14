@@ -325,6 +325,35 @@ df_ponderaciones_mv <- left_join(df_ponder_mv,
 df_ponderaciones_mv
 ```
 
+##Gráfica de ponderaciones
+
+```{r}
+# Pasar a formato largo para graficar
+df_plot <- df_ponderaciones_mv %>%
+  pivot_longer(cols = c("ponderaciones_mv", "ponderaciones_mv_rest"),
+               names_to = "tipo_portafolio",
+               values_to = "ponderacion") %>%
+  mutate(tipo_portafolio = recode(tipo_portafolio,
+                                  "ponderaciones_mv" = "Sin restricciones",
+                                  "ponderaciones_mv_rest" = "Con restricciones"))
+```
+
+Gráfica de barras comparativa
+
+```{r}
+ggplot(df_plot, aes(x = reorder(ticker, ponderacion), y = ponderacion,
+                    fill = tipo_portafolio)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Ponderaciones del Portafolio de Mínima Varianza",
+       subtitle = "Comparación entre sin restricciones y con restricciones",
+       x = "Activo",
+       y = "Ponderación",
+       fill = "Tipo de Portafolio") +
+  theme_minimal()
+```
+
 Tabla de resultados de la media y desviación (con y sin restricción)
 
 ```{r}
