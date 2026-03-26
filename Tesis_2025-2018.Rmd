@@ -1,0 +1,314 @@
+---
+title: "Portafolio_2018-2025"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025-08-04"
+---
+
+## Librerías
+
+```{r, echo = TRUE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tidyquant)
+library(PortfolioAnalytics)
+library(quantmod)
+library(PerformanceAnalytics)
+library(timetk)
+library(patchwork)
+library(moments)
+library(knitr)
+library(dplyr)
+```
+
+## Descarga de acciones
+
+Se descarga la información de las acciones de interes.
+
+Asímismo, se selecciona la fecha de inicio, última fecha, frecuencia, el nombre de cada ticker y se guarda en un dataframe:
+
+```{r, echo = TRUE, warning=FALSE}
+primera_fecha <- "2018-01-01"
+ultima_fecha <- "2025-07-30"
+
+frecuencia <- "daily"
+
+tickers <- c("AC.MX", "ALFAA.MX", "ALSEA.MX", "AMXB.MX", "ASURB.MX", "BBAJIOO.MX",
+             "BIMBOA.MX", "BOLSAA.MX","CEMEXCPO.MX", "CHDRAUIB.MX", "CUERVO.MX", 
+             "FEMSAUBD.MX","GAPB.MX", "GCARSOA1.MX", "GCC.MX", "GENTERA.MX", 
+             "GFINBURO.MX", "GFNORTEO.MX", "GMEXICOB.MX", "GRUMAB.MX", "KIMBERA.MX", 
+             "LABB.MX","LIVEPOLC-1.MX", "MEGACPO.MX", "OMAB.MX", "ORBIA.MX", 
+             "PINFRA.MX", "Q.MX", "RA.MX", "TLEVISACPO.MX", "VESTA.MX", "WALMEX.MX")
+
+descarga_precios <- tickers %>%
+  tq_get(get  = "stock.prices",
+         from = primera_fecha,
+         to = ultima_fecha)
+
+precios <- descarga_precios$df.tickers
+```
+
+##Log-rendimientos
+
+Se calculan los log-rendimientos de cada uno:
+
+```{r, echo=TRUE, warning=FALSE}
+descarga_precios <- descarga_precios %>% group_by(symbol)
+rendimientos_activos <- descarga_precios %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "daily",
+                 type       = "log",
+                 col_rename = "returns")
+```
+
+##Descriptivos
+
+Se calculan los descriptivos: media, mediana, desviación estándar, skewness, kurtosis, mínimo, máximo:
+
+```{r, echo=TRUE, warning=FALSE}
+descrip_activos <- rendimientos_activos %>% summarise(Media = mean(returns),
+                                   Mediana = median(returns),
+                                   Desviación = sqrt(var(returns)),
+                                   Asimetría = moments::skewness(returns),
+                                   Curtosis = moments::kurtosis(returns),
+                                   Mínimo = min(returns),
+                                   Máximo = max(returns))
+
+descrip_activos
+```
+
+
+## Verificación de acciones descargadas
+
+```{r}
+empresas <- descarga_precios %>% dplyr::select(symbol) %>% unique()
+empresas <- empresas$symbol
+empresas
+```
+
+##IPC
+
+Descarga de precios
+
+```{r}
+primera_fecha_IPC <- "2018-01-01"
+ultima_fecha_IPC <- "2025-07-30"
+
+frecuencia_IPC <- "daily"
+
+ticker_IPC <- c("^MXX") 
+descarga_precio_IPC <- ticker_IPC %>%
+  tq_get(get  = "stock.prices",
+         from = primera_fecha_IPC,
+         to = ultima_fecha_IPC)
+
+```
+
+
+```{r}
+descarga_precio_IPC %>% head()
+```
+
+Log-rendimientos del IPC
+
+```{r}
+descarga_precio_IPC <- descarga_precio_IPC %>% group_by(symbol)
+rendimiento_IPC <- descarga_precio_IPC %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "daily",
+                 type       = "log",
+                 col_rename = "returns")
+```
+
+Rendimiento acumulado del IPC
+
+```{r}
+rendimiento_total_IPC <- rendimiento_IPC %>%
+  summarise(rendimiento_acumulado_total = exp(sum(returns)) - 1)
+
+rendimiento_total_IPC
+```
+
+Descriptivos del IPC
+
+```{r}
+descrip_IPC <- rendimiento_IPC %>% summarise(media = mean(returns),
+                                   mediana = median(returns),
+                                   desviacion = sqrt(var(returns)),
+                                   asimetria = moments::skewness(returns),
+                                   curtosis = moments::kurtosis(returns),
+                                   minimo = min(returns),
+                                   maximo = max(returns))
+```
+
+```{r}
+descrip_IPC
+```
+
+Precio histórico, donde se recalca el periodo de pandemia
+
+```{r}
+tick <- "^MXX"
+descarga_precio_IPC %>% dplyr::filter(symbol == tick) %>%
+  ggplot() +
+  geom_rect(aes(xmin = as.Date("2020-01-01"),
+                xmax = as.Date("2022-01-01"),
+                ymin=-Inf, ymax=Inf), fill = "thistle1", alpha = 0.1) +
+  geom_line(aes(x = date, y = adjusted), color = "navyblue") +
+  ggtitle(paste0("Precios históricos de ", tick)) + xlab("") + ylab("Precio ajustado") +
+  theme_light()
+```
+
+
+
+Plot de rendimientos, donde se recalca el periodo de pandemia
+
+```{r}
+tick <- "^MXX"
+rendimiento_IPC %>% dplyr::filter(symbol == tick) %>%
+  ggplot(aes(x = date, y = returns)) +
+  geom_rect(aes(xmin = as.Date("2020-01-01"),
+                xmax = as.Date("2022-01-01"),
+                ymin=-Inf, ymax=Inf), fill = "thistle1", alpha = 0.1) +
+    geom_line(color = "navyblue") +
+    geom_hline(yintercept = 0, color = "red") +
+    scale_y_continuous(labels = scales::percent) +
+  ggtitle(paste0("Rendimiento histórico de ", tick)) +
+  xlab("") + ylab("") +
+  theme_light()
+```
+
+
+
+
+
+##IPC fecha 01-07-2025 al 31-12-2025
+
+Descarga del IPC con la nueva fecha
+
+```{r}
+primera_fecha_IPC2 <- "2025-07-01"
+ultima_fecha_IPC2 <- "2025-12-30"
+
+frecuencia_IPC2 <- "daily"
+
+ticker_IPC2 <- c("^MXX") 
+descarga_precio_IPC2 <- ticker_IPC2 %>%
+  tq_get(get  = "stock.prices",
+         from = primera_fecha_IPC2,
+         to = ultima_fecha_IPC2)
+
+```
+
+Comprobación
+
+```{r}
+descarga_precio_IPC2 %>% head()
+```
+
+Log-Rendimiento del IPC
+
+```{r}
+descarga_precio_IPC2 <- descarga_precio_IPC2 %>% group_by(symbol)
+rendimiento_IPC2 <- descarga_precio_IPC2 %>%
+    tq_transmute(select     = adjusted,
+                 mutate_fun = periodReturn,
+                 period     = "daily",
+                 type       = "log",
+                 col_rename = "returns")
+```
+
+Rendimiento acumulado
+
+```{r}
+# Rendimientos acumulados diarios
+rendimiento_acumulado_IPC2 <- rendimiento_IPC2 %>%
+  mutate(cum_log_return = cumsum(returns),
+         cum_return = exp(cum_log_return) - 1)
+
+head(rendimiento_acumulado_IPC2)
+```
+
+```{r}
+rendimiento_total_IPC2 <- rendimiento_IPC2 %>%
+  summarise(rendimiento_acumulado_total = exp(sum(returns)) - 1)
+
+rendimiento_total_IPC2
+```
+
+De la pagina de Banxico, se obtiene el historico de las tasas cetes
+
+```{r}
+historico_cete <- read.csv("/Users/Arturo/Desktop/Cetes_enero18-nov24.csv")
+```
+
+Se ajusta el rendimiento libre de riesgo para datos semanales
+
+```{r}
+
+r_f <- ((mean(historico_cete$Valores) / 100 + 1)^(1 / 360)) - 1  
+# Convertir r_f diario
+```
+
+
+Sharp-Ratio del IPC
+```{r}
+
+sharpe_IPC2 <- rendimiento_IPC2 %>%
+  summarise(
+    mean_return = mean(returns),
+    sd_return   = sd(returns),
+    sharpe_ratio = (mean_return - r_f) / sd_return
+  )
+
+sharpe_IPC2
+
+```
+
+
+Treynor-Ratio del IPC 
+
+```{r}
+treynor_IPC2 <- rendimiento_IPC2 %>%
+  summarise(
+    mean_return = mean(returns),
+    treynor_anual = ((mean_return * 360) - r_f) / 1
+  )
+
+treynor_IPC2
+```
+
+Sortino-Ratio del IPC
+
+```{r}
+sortino_IPC <- rendimiento_IPC2 %>%
+  summarise(
+    mean_return = mean(returns),
+    
+    # downside desviation
+    downside_sd = sd(ifelse(returns < r_f,
+                            returns - r_f,
+                            NA),
+                     na.rm = TRUE),
+    
+    sortino_anual = ((mean_return * 360) - r_f*360) /
+                     (downside_sd * sqrt(360))
+  )
+
+sortino_IPC
+```
+
+```{r}
+SortinoRatio(rendimiento_IPC2$returns,
+             MAR = r_f) * sqrt(360)
+```
+
+
+
+
+
+
