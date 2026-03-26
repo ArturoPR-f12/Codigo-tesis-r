@@ -1,0 +1,673 @@
+---
+title: "Limpio_prueba"
+output: html_document
+date: "2026-03-02"
+---
+## Librerías
+
+```{r, echo = TRUE, message=FALSE}
+library(rvest)
+library(dplyr)
+library(BatchGetSymbols)
+library(ggplot2)
+library(tidyr)
+library(rlang)
+library(quadprog)
+library(readxl)
+library(ggrepel)
+library(knitr)
+library(RColorBrewer)
+library(ggthemes)
+library(xtable)
+library(lubridate)
+library(tidyquant)
+library(foreach)
+library(PortfolioAnalytics)
+library(quantmod)
+library(PerformanceAnalytics)
+library(timetk)
+library(ggcorrplot)
+library(ggrepel)
+library(cluster)
+library(factoextra)
+library(caret)
+```
+
+## Descarga de acciones
+
+Se descarga la información de las acciones de interes.
+
+Asímismo, se selecciona la fecha de inicio, última fecha, frecuencia, el nombre de cada ticker y se guarda en un dataframe:
+
+```{r, echo = TRUE, warning=FALSE}
+primera_fecha <- "2025-07-01"
+ultima_fecha <- "2025-12-31"
+
+frecuencia <- "daily"
+
+tickers <- c("AC.MX", "ALFAA.MX", "ALSEA.MX", "AMXB.MX", "ASURB.MX", "BBAJIOO.MX",
+             "BIMBOA.MX", "BOLSAA.MX","CEMEXCPO.MX", "CHDRAUIB.MX", "CUERVO.MX", 
+             "FEMSAUBD.MX","GAPB.MX", "GCARSOA1.MX", "GCC.MX", "GENTERA.MX", 
+             "GFINBURO.MX", "GFNORTEO.MX", "GMEXICOB.MX", "GRUMAB.MX", "KIMBERA.MX", 
+             "LABB.MX","LIVEPOLC-1.MX", "MEGACPO.MX", "OMAB.MX", "ORBIA.MX", 
+             "PINFRA.MX", "Q.MX", "RA.MX", "TLEVISACPO.MX", "VESTA.MX", "WALMEX.MX")
+
+descarga <- BatchGetSymbols(tickers = tickers,
+                            first.date = primera_fecha,
+                            last.date = ultima_fecha,
+                            freq.data = frecuencia)
+
+precios <- descarga$df.tickers
+```
+
+## Verificación de acciones descargadas
+
+```{r}
+empresas <- precios %>% dplyr::select(ticker) %>% unique()
+empresas <- empresas$ticker
+empresas
+```
+
+Se acomoda la información en un dataframe
+
+```{r}
+df_precios <- precios %>%
+  dplyr::select(ref.date, price.adjusted, ticker) %>%
+  pivot_wider(names_from = ticker, values_from = price.adjusted)
+
+names(df_precios)[1] <- "Fecha"
+
+num_acciones <- length(names(df_precios)) -1
+nombres_acciones <- names(df_precios)[2:(num_acciones+1)]
+nombres_genericos <- paste0("accion_", 1:num_acciones)
+nombres_originales <- names(df_precios)[2:(num_acciones+1)]
+names(df_precios)[2:(num_acciones+1)] <- nombres_genericos
+
+for(i in 1:num_acciones){
+  columna <- as.name(paste0("accion_",i))
+  vector_precios <- dplyr::pull(df_precios[columna], columna)
+  log_rendimientos <- c()
+  for(j in 2:length(vector_precios)){
+    log_rendimientos[j] <- log(vector_precios[j]/vector_precios[j-1])
+  }
+  df_precios <- df_precios %>% mutate(!! as.name(paste0("rendimiento_",i)) := log_rendimientos)
+}
+
+```
+
+Se guardan los log-rendimientos de cada acción por fecha y sin fecha
+
+```{r}
+df_rendims_acciones <- df_precios %>% dplyr::select(Fecha, starts_with("rendimiento_")) %>%
+  drop_na()
+
+df_rendimientos <- df_precios %>% dplyr::select(starts_with("rendimiento_")) %>% drop_na()
+
+```
+
+Se guarda la correspondencia del nombre de las acciones con el nombre genérico
+
+```{r}
+df_nombres <- data.frame(nombres_originales = nombres_originales,
+                         nombres_genericos = nombres_genericos,
+                         rendims_genericos = names(df_rendimientos))
+```
+
+## Construcción de portafolio
+
+De la pagina de Banxico, se obtiene el historico de las tasas cetes
+
+```{r}
+historico_cete <- read.csv("/Users/Arturo/Desktop/Cetes_enero18-nov24.csv")
+```
+
+Se ajusta el rendimiento libre de riesgo para datos semanales
+
+```{r}
+r_f <- ((mean(historico_cete$Valores) / 100 + 1)^(1 / 360)) - 1  # Convertir r_f diario 
+```
+
+##Construcción de portafolio óptimo usando PCA y clustering
+
+MATRIZ DE RENDIMIENTOS Y ESTADÍSTICAS BASE
+
+```{r}
+# Convertir rendimientos a matriz
+mat_rendimientos <- as.matrix(df_rendimientos)
+
+# Estadísticas por acción
+medias      <- colMeans(mat_rendimientos)
+covarianza  <- cov(mat_rendimientos)
+desv_est    <- apply(mat_rendimientos, 2, sd)
+
+# Sharpe individual (anualizado 252 días)
+sharpe_ind <- (medias * 252 - r_f * 252) / (desv_est * sqrt(252))
+
+df_stats <- data.frame(
+  accion        = nombres_originales,
+  media_diaria  = medias,
+  desv_diaria   = desv_est,
+  sharpe        = sharpe_ind
+)
+print(df_stats)
+```
+
+PCA SOBRE RENDIMIENTOS
+
+```{r}
+pca_result <- prcomp(mat_rendimientos, scale. = TRUE, center = TRUE)
+
+# Varianza explicada
+var_explicada    <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+var_acumulada    <- cumsum(var_explicada)
+
+# Gráfico de varianza explicada (scree plot)
+df_var <- data.frame(
+  PC          = 1:length(var_explicada),
+  Individual  = var_explicada,
+  Acumulada   = var_acumulada
+)
+```
+
+Gráfica de varianza explicada por componentes principales
+
+```{r}
+ggplot(df_var, aes(x = PC)) +
+  geom_bar(aes(y = Individual), stat = "identity", fill = "steelblue", alpha = 0.7) +
+  geom_line(aes(y = Acumulada), color = "red", size = 1) +
+  geom_point(aes(y = Acumulada), color = "red", size = 2) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "darkgreen") +
+  labs(title = "Varianza Explicada por Componente Principal",
+       x = "Componente Principal", y = "Proporción de Varianza") +
+  theme_minimal()
+```
+
+Componentes principales necesarias
+
+```{r}
+# Número de PCs que explican >= 80% de la varianza
+n_pcs <- which(var_acumulada >= 0.80)[1]
+cat("PCs necesarias para explicar 80% de varianza:", n_pcs, "\n")
+
+# Cargas (loadings) de los primeros PCs
+loadings_df <- as.data.frame(pca_result$rotation[, 1:min(n_pcs, 5)])
+loadings_df$accion <- nombres_originales
+print(loadings_df)
+```
+
+Biplot de las primeras 2 componentes
+
+```{r}
+
+scores_df <- as.data.frame(pca_result$x[, 1:2])
+
+fviz_pca_var(pca_result,
+             col.var    = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel      = TRUE,
+             title      = "PCA – Variables (Acciones)") +
+  theme_minimal()
+```
+
+CLUSTERING SOBRE SCORES PCA
+
+```{r}
+# Usamos los scores de las n_pcs componentes para clusterizar
+scores_pca <- pca_result$x[, 1:n_pcs]
+
+# Clustering sobre las ACCIONES (transponer: acciones en filas)
+loadings_pca <- pca_result$rotation[, 1:n_pcs]   # filas = acciones
+
+# Determinar número óptimo de clusters (método del codo)
+set.seed(123)
+fviz_nbclust(loadings_pca, kmeans, method = "wss",
+             k.max = 30) +
+  labs(title = "Método del Codo – Número Óptimo de Clusters") +
+  theme_minimal()
+```
+
+
+```{r}
+# Número de clusters (ajusta según el codo observado)
+k_optimo <- 4
+
+set.seed(123)
+km_result <- kmeans(loadings_pca, centers = k_optimo, nstart = 25, iter.max = 100)
+
+# Asignar cluster a cada acción
+df_clusters <- data.frame(
+  accion_generica = nombres_genericos,
+  accion          = nombres_originales,
+  cluster         = km_result$cluster
+)
+
+cat("\nAcciones por cluster:\n")
+print(df_clusters %>% arrange(cluster))
+```
+
+
+```{r}
+# Visualización de clusters en espacio PCA
+fviz_cluster(km_result,
+             data          = loadings_pca,
+             labelsize     = 8,
+             repel         = TRUE,
+             ellipse.type  = "convex",
+             palette       = "Set2",
+             ggtheme       = theme_minimal()) +
+  labs(title = paste0("Clustering K-Means (k=", k_optimo, ") en espacio PCA")) +
+  scale_shape_manual(values = rep(16, k_optimo))
+
+# Mapa de calor de correlaciones coloreado por cluster
+orden_cluster <- df_clusters %>% arrange(cluster) %>% pull(accion_generica)
+idx_orden     <- match(orden_cluster, nombres_genericos)
+cor_mat       <- cor(mat_rendimientos)[idx_orden, idx_orden]
+colnames(cor_mat) <- rownames(cor_mat) <- df_clusters$accion[match(orden_cluster, df_clusters$accion_generica)]
+```
+
+Gráfico de correlaciones
+
+```{r}
+ggcorrplot(cor_mat,
+           hc.order   = FALSE,
+           type       = "lower",
+           lab        = FALSE,
+           tl.cex     = 7,
+           colors     = c("#FC4E07", "white", "#00AFBB"),
+           title      = "Correlaciones ordenadas por Cluster") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+SELECCIÓN DE REPRESENTANTE POR CLUSTER
+
+```{r}
+representantes <- df_clusters %>%
+  left_join(df_stats %>% mutate(accion_generica = nombres_genericos), 
+            by = "accion_generica") %>%
+  group_by(cluster) %>%
+  slice_max(sharpe, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+# DEBUG: ver qué columnas existen
+cat("Columnas en representantes:\n")
+print(names(representantes))
+
+cat("\nRepresentante seleccionado por cluster:\n")
+print(representantes %>% dplyr::select(cluster, accion.x, sharpe))
+
+acciones_seleccionadas <- representantes$accion_generica
+nombres_seleccionados  <- representantes$accion.x
+n_sel <- length(acciones_seleccionadas)
+```
+
+PORTAFOLIO ÓPTIMO (MÁXIMO SHARPE) CON QUADPROG
+
+```{r}
+# Sub-matrices para acciones seleccionadas
+idx_sel     <- match(acciones_seleccionadas, nombres_genericos)
+medias_sel  <- medias[idx_sel]
+cov_sel     <- covarianza[idx_sel, idx_sel]
+
+max_sharpe_portfolio <- function(mu, Sigma, rf, n_sim = 5000) {
+  n <- length(mu)
+  
+  set.seed(42)
+  pesos_sim  <- matrix(runif(n_sim * n), ncol = n)
+  pesos_sim  <- pesos_sim / rowSums(pesos_sim)
+  
+  ret_sim    <- pesos_sim %*% mu * 252
+  
+  # Calcular varianza fila por fila para no agotar memoria
+  riesgo_sim <- sqrt(sapply(1:n_sim, function(i) {
+    p <- pesos_sim[i, ]
+    t(p) %*% Sigma %*% p
+  })) * sqrt(252)
+  
+  sharpe_sim <- (ret_sim - rf * 252) / riesgo_sim
+  
+  mejor_idx  <- which.max(sharpe_sim)
+  pesos_mc   <- pesos_sim[mejor_idx, ]
+  ret_obj    <- as.numeric(ret_sim[mejor_idx]) / 252
+  
+  # Refinamiento con quadprog
+  Dmat <- 2 * Sigma
+  dvec <- rep(0, n)
+  Amat <- cbind(rep(1, n), mu, diag(n))
+  bvec <- c(1, ret_obj, rep(0, n))
+  meq  <- 1
+  
+  sol <- tryCatch(
+    solve.QP(Dmat, dvec, Amat, bvec, meq = meq),
+    error = function(e) NULL
+  )
+  
+  if (!is.null(sol)) {
+    pesos_opt <- sol$solution
+    pesos_opt[pesos_opt < 1e-6] <- 0
+    pesos_opt <- pesos_opt / sum(pesos_opt)
+  } else {
+    pesos_opt <- pesos_mc
+  }
+  
+  ret_opt    <- sum(pesos_opt * mu) * 252
+  riesgo_opt <- sqrt(t(pesos_opt) %*% Sigma %*% pesos_opt) * sqrt(252)
+  sharpe_opt <- (ret_opt - rf * 252) / riesgo_opt
+  
+  list(
+    pesos    = pesos_opt,
+    retorno  = ret_opt,
+    riesgo   = as.numeric(riesgo_opt),
+    sharpe   = as.numeric(sharpe_opt),
+    frontera = data.frame(retorno = as.numeric(ret_sim), 
+                          riesgo  = riesgo_sim, 
+                          sharpe  = as.numeric(sharpe_sim))
+  )
+}
+
+resultado <- max_sharpe_portfolio(medias_sel, cov_sel, r_f)
+```
+
+
+
+```{r}
+# Tabla de pesos
+df_pesos <- data.frame(
+  Accion  = nombres_seleccionados,
+  Cluster = representantes$cluster,
+  Peso    = round(resultado$pesos * 100, 2)
+) %>% filter(Peso > 0.01)
+
+cat("\n=== PORTAFOLIO ÓPTIMO (Máximo Sharpe) ===\n")
+print(df_pesos)
+cat(sprintf("\nRendimiento anualizado : %.2f%%\n", resultado$retorno * 100))
+cat(sprintf("Riesgo anualizado  : %.2f%%\n", resultado$riesgo  * 100))
+cat(sprintf("Sharpe ratio       : %.4f\n",   resultado$sharpe))
+```
+
+VISUALIZACIONES FINALES
+
+```{r}
+#Frontera eficiente + portafolio óptimo
+frontera <- resultado$frontera
+
+ggplot(frontera, aes(x = riesgo * 100, y = retorno * 100, color = sharpe)) +
+  geom_point(alpha = 0.3, size = 0.8) +
+  scale_color_gradient(low = "blue", high = "red", name = "Sharpe") +
+  geom_point(aes(x = resultado$riesgo * 100, y = resultado$retorno * 100),
+             color = "gold", size = 5, shape = 18) +
+  annotate("text", x = resultado$riesgo * 100, y = resultado$retorno * 100,
+           label = "Máx. Sharpe", vjust = -1, fontface = "bold", color = "black") +
+  labs(title = "Frontera Eficiente – Portafolio PCA + Clustering",
+       x     = "Rendimiento (%)",
+       y     = "Riesgo (%)") +
+  theme_minimal()
+```
+
+## Métricas de desempeño
+
+Rendimiento diario del portafolio óptimo
+
+```{r}
+# Rendimientos diarios solo de las acciones seleccionadas
+rendimientos_sel <- mat_rendimientos[, idx_sel]
+
+# Vector de pesos óptimos
+pesos_opt <- resultado$pesos
+
+# Rendimiento diario del portafolio
+rend_portafolio <- rendimientos_sel %*% pesos_opt
+
+# Convertir a vector
+rend_portafolio <- as.numeric(rend_portafolio)
+
+# Crear dataframe con fechas
+df_portafolio <- data.frame(
+  Fecha = df_rendims_acciones$Fecha,
+  Rendimiento = rend_portafolio
+)
+
+head(df_portafolio)
+
+```
+
+```{r}
+# Rendimiento acumulado (usando log-returns)
+df_portafolio$Rend_Acumulado <- exp(cumsum(df_portafolio$Rendimiento)) - 1
+
+# Último rendimiento acumulado total
+rendimiento_total <- tail(df_portafolio$Rend_Acumulado, 1)
+
+cat("Rendimiento acumulado total del portafolio:", 
+    round(rendimiento_total * 100, 4), "%\n")
+```
+
+Gráfica del rendimiento acumulado
+
+```{r}
+ggplot(df_portafolio, aes(x = Fecha, y = Rend_Acumulado)) +
+  geom_line(size = 1, color = "darkblue") +
+  labs(title = "Rendimiento Acumulado del Portafolio Óptimo (PCA + Clustering)",
+       x = "Fecha",
+       y = "Rendimiento acumulado") +
+  theme_minimal()
+
+```
+
+## Indicadores del portafolio $\Pi$
+
+Sharp-Ratio
+
+```{r}
+# Media y desviación diaria del portafolio
+media_port   <- mean(rend_portafolio)
+desv_port    <- sd(rend_portafolio)
+
+# Sharpe anual (360 días)
+sharpe_port <- (media_port * 360 - r_f * 360) / (desv_port * sqrt(360))
+
+cat("Sharpe Ratio anual del portafolio óptimo:", 
+    round(sharpe_port, 6), "\n")
+```
+
+
+Treynor-ratio
+
+```{r}
+# Descargar IPC
+ipc_data <- BatchGetSymbols(tickers = "^MXX",
+                            first.date = primera_fecha,
+                            last.date = ultima_fecha,
+                            freq.data = frecuencia)
+
+ipc_precios <- ipc_data$df.tickers
+
+df_ipc <- ipc_precios %>%
+  dplyr::select(ref.date, price.adjusted) %>%
+  arrange(ref.date)
+
+# Log-rendimientos IPC
+ipc_rend <- diff(log(df_ipc$price.adjusted))
+
+# Alinear fechas
+ipc_rend <- ipc_rend[!is.na(ipc_rend)]
+
+df_mercado <- data.frame(
+  Fecha = df_rendims_acciones$Fecha,
+  Rend_IPC = ipc_rend
+)
+```
+
+Se calcula la $\beta$
+
+```{r}
+# Alinear longitudes por seguridad
+min_len <- min(length(rend_portafolio), length(df_mercado$Rend_IPC))
+
+rp <- rend_portafolio[1:min_len]
+rm <- df_mercado$Rend_IPC[1:min_len]
+
+# Beta = Cov(Rp, Rm) / Var(Rm)
+beta_port <- cov(rp, rm) / var(rm)
+
+cat("Beta del portafolio:", round(beta_port, 6), "\n")
+```
+
+```{r}
+# Media diaria del portafolio
+media_port <- mean(rp)
+
+# Treynor anualizado
+treynor_port <- ((media_port * 360) - (r_f * 360)) / beta_port
+
+cat("Treynor Ratio anualizado del portafolio:", 
+    round(treynor_port, 6), "\n")
+```
+
+Sortino Ratio
+
+```{r}
+# Alinear datos (por seguridad)
+min_len <- length(rend_portafolio)
+rp <- rend_portafolio[1:min_len]
+
+# Excess return diario
+excess_ret <- rp - r_f
+
+# Downside deviation (solo retornos negativos respecto a rf)
+downside <- ifelse(excess_ret < 0, excess_ret, 0)
+
+downside_dev <- sqrt(mean(downside^2))
+
+# Sortino anualizado
+sortino_port <- ((mean(rp) * 252) - (r_f * 252)) / (downside_dev * sqrt(252))
+
+cat("Sortino Ratio anualizado del portafolio:", 
+    round(sortino_port, 6), "\n")
+```
+
+##Gráfica comparativa
+
+```{r}
+# Rendimiento acumulado IPC (base 100)
+df_mercado$Indice_IPC <- exp(cumsum(df_mercado$Rend_IPC))
+
+# Asegurarnos que el portafolio también esté en base 100
+df_portafolio$Indice_Portafolio <- exp(cumsum(df_portafolio$Rendimiento))
+```
+
+Unir el portafolio
+
+```{r}
+# Unir por fecha para garantizar alineación perfecta
+df_comparacion <- df_portafolio %>%
+  dplyr::select(Fecha, Indice_Portafolio) %>%
+  inner_join(df_mercado %>% 
+               dplyr::select(Fecha, Indice_IPC),
+             by = "Fecha")
+```
+
+Formato largo
+
+```{r}
+df_long <- df_comparacion %>%
+  pivot_longer(cols = c(Indice_Portafolio, Indice_IPC),
+               names_to = "Serie",
+               values_to = "Valor")
+```
+
+Gráfica
+
+```{r}
+ggplot(df_long, aes(x = Fecha, y = Valor, color = Serie)) +
+  geom_line(size = 1.1) +
+  labs(title = "Comparación de Rendimiento Acumulado\nPortafolio Óptimo vs IPC",
+       x = "Fecha",
+       y = "Índice",
+       color = "") +
+  theme_minimal() +
+  scale_color_manual(values = c("Indice_Portafolio" = "darkblue",
+                                "Indice_IPC" = "red"),
+                     labels = c("IPC (^MXX)", "Portafolio PCA + Clustering"
+                                ))
+```
+
+## Indicadores del IPC
+
+Sharp- ratio
+
+```{r}
+# Rendimientos diarios del IPC
+rm <- df_mercado$Rend_IPC
+
+# Media y desviación diaria
+media_ipc <- mean(rm)
+desv_ipc  <- sd(rm)
+
+# Sharpe anual (360 días)
+sharpe_ipc <- (media_ipc * 360 - r_f * 360) / (desv_ipc * sqrt(360))
+
+cat("Sharpe Ratio anual del IPC:", 
+    round(sharpe_ipc, 6), "\n")
+```
+
+Treynor ratio
+
+```{r}
+treynor_ipc_simple <- (mean(rm) * 360) - (r_f * 360)
+
+cat("Treynor IPC:", 
+    round(treynor_ipc_simple, 6), "\n")
+```
+
+Sortino ratio
+
+```{r}
+# Rendimientos diarios del IPC
+rm <- df_mercado$Rend_IPC
+
+# Excess return diario respecto a rf
+excess_ipc <- rm - r_f
+
+# Downside (solo cuando es negativo)
+downside_ipc <- ifelse(excess_ipc < 0, excess_ipc, 0)
+
+# Downside deviation diaria
+downside_dev_ipc <- sqrt(mean(downside_ipc^2))
+
+# Sortino anual
+sortino_ipc <- ((mean(rm) * 360) - (r_f * 360)) / 
+                (downside_dev_ipc * sqrt(360))
+
+cat("Sortino Ratio anualizado del IPC:", 
+    round(sortino_ipc, 6), "\n")
+```
+
+Rendimiento acumulado del IPC
+
+```{r}
+# Rendimientos diarios IPC
+rm <- df_mercado$Rend_IPC
+
+# Rendimiento acumulado (log-returns)
+acum_ipc <- exp(cumsum(rm)) - 1
+
+# Agregar al dataframe
+df_mercado$Rend_Acumulado_IPC <- acum_ipc
+
+head(df_mercado)
+```
+
+Resultado
+
+```{r}
+rend_total_ipc <- tail(acum_ipc, 1)
+
+cat("Rendimiento acumulado total del IPC en el periodo:",
+    round(rend_total_ipc * 100, 4), "%\n")
+```
+
+
+
+
+
+
