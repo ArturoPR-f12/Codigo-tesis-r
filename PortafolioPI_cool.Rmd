@@ -68,49 +68,82 @@ empresas <- empresas$ticker
 empresas
 ```
 
-Se acomoda la información en un dataframe
+##Limpieza y construcción del data frame
 
 ```{r}
 df_precios <- precios %>%
   dplyr::select(ref.date, price.adjusted, ticker) %>%
-  pivot_wider(names_from = ticker, values_from = price.adjusted)
+  pivot_wider(names_from = ticker, values_from = price.adjusted) %>%
+  rename(Fecha = ref.date)
 
-names(df_precios)[1] <- "Fecha"
-
-num_acciones <- length(names(df_precios)) -1
-nombres_acciones <- names(df_precios)[2:(num_acciones+1)]
-nombres_genericos <- paste0("accion_", 1:num_acciones)
-nombres_originales <- names(df_precios)[2:(num_acciones+1)]
-names(df_precios)[2:(num_acciones+1)] <- nombres_genericos
-
-for(i in 1:num_acciones){
-  columna <- as.name(paste0("accion_",i))
-  vector_precios <- dplyr::pull(df_precios[columna], columna)
-  log_rendimientos <- c()
-  for(j in 2:length(vector_precios)){
-    log_rendimientos[j] <- log(vector_precios[j]/vector_precios[j-1])
-  }
-  df_precios <- df_precios %>% mutate(!! as.name(paste0("rendimiento_",i)) := log_rendimientos)
-}
-
+num_acciones     <- ncol(df_precios) - 1
+nombres_originales <- names(df_precios)[2:(num_acciones + 1)]
+nombres_genericos  <- paste0("accion_", seq_len(num_acciones))
+names(df_precios)[2:(num_acciones + 1)] <- nombres_genericos
 ```
 
-Se guardan los log-rendimientos de cada acción por fecha y sin fecha
+Diferencia de precio (hoy - ayer) y filtro de rachas
+El loop recorre las diferencias de cada acción rastreando el inicio y la 
+longitud de cada racha de ceros. Cuando una racha cierra (o llega al final del 
+vector) y superó 5 elementos, esas observaciones se marcan y se convierten en NA. 
 
 ```{r}
-df_rendims_acciones <- df_precios %>% dplyr::select(Fecha, starts_with("rendimiento_")) %>%
+for (i in seq_len(num_acciones)) {
+  col_accion <- paste0("accion_", i)
+  col_rend   <- paste0("rendimiento_", i)
+
+  vector_precios <- df_precios[[col_accion]]
+
+  diferencias <- c(NA, diff(vector_precios))   
+  
+  n         <- length(diferencias)
+  descartado <- rep(FALSE, n)
+
+  racha_inicio <- NA
+  racha_actual <- 0
+
+  for (j in seq_len(n)) {
+    val <- diferencias[j]
+    if (!is.na(val) && val == 0) {
+      if (racha_actual == 0) racha_inicio <- j
+      racha_actual <- racha_actual + 1
+    } else {
+      if (racha_actual > 5) {
+        descartado[racha_inicio:(j - 1)] <- TRUE
+      }
+      racha_actual <- 0
+      racha_inicio <- NA
+    }
+  }
+  if (racha_actual > 5) {
+    descartado[racha_inicio:n] <- TRUE
+  }
+
+  diferencias[descartado] <- NA
+
+  df_precios[[col_rend]] <- diferencias
+}
+```
+
+Se quitarn las filas con NA en rendimientos
+
+```{r}
+df_rendims_acciones <- df_precios %>%
+  dplyr::select(Fecha, starts_with("rendimiento_")) %>%
   drop_na()
 
-df_rendimientos <- df_precios %>% dplyr::select(starts_with("rendimiento_")) %>% drop_na()
-
+df_rendimientos <- df_rendims_acciones %>%
+  dplyr::select(starts_with("rendimiento_"))
 ```
 
 Se guarda la correspondencia del nombre de las acciones con el nombre genérico
 
 ```{r}
-df_nombres <- data.frame(nombres_originales = nombres_originales,
-                         nombres_genericos = nombres_genericos,
-                         rendims_genericos = names(df_rendimientos))
+df_nombres <- data.frame(
+  nombres_originales = nombres_originales,
+  nombres_genericos  = nombres_genericos,
+  rendims_genericos  = names(df_rendimientos)
+)
 ```
 
 ## Construcción de portafolio
