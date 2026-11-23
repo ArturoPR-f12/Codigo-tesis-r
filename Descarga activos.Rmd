@@ -1,0 +1,148 @@
+---
+title: "Descarga_precios_APR"
+author: "APR"
+date: "2026-11-23"
+output: html_document
+---
+
+## Librerías
+
+```{r}
+library(quantmod)
+library(dplyr)
+library(readr)
+library(tidyr)
+```
+
+## Tickers
+
+```{r}
+tickers <- c("AC.MX", "ALFAA.MX", "ALSEA.MX", "AMXB.MX", "ASURB.MX", "BBAJIOO.MX",
+             "BIMBOA.MX", "BOLSAA.MX", "CEMEXCPO.MX", "CHDRAUIB.MX", "CUERVO.MX",
+             "FEMSAUBD.MX", "GAPB.MX", "GCARSOA1.MX", "GCC.MX", "GENTERA.MX",
+             "GFINBURO.MX", "GFNORTEO.MX", "GMEXICOB.MX", "GRUMAB.MX", "KIMBERA.MX",
+             "LABB.MX", "LIVEPOLC-1.MX", "MEGACPO.MX", "OMAB.MX", "ORBIA.MX",
+             "PINFRA.MX", "Q.MX", "RA.MX", "TLEVISACPO.MX", "VESTA.MX", "WALMEX.MX")
+```
+
+## Fechas
+
+```{r}
+fecha_ini <- as.Date("2018-01-01")
+fecha_fin <- as.Date("2025-07-30")
+```
+
+## Descarga de archivos
+
+```{r}
+descargar_activo <- function(sym) {
+  tryCatch({
+    # "to" se pone un día después porque Yahoo no siempre incluye la fecha final
+    xt <- getSymbols(sym, src = "yahoo",
+                     from = fecha_ini, to = fecha_fin + 1,
+                     auto.assign = FALSE, warnings = FALSE)
+    data.frame(
+      date     = index(xt),
+      symbol   = sym,
+      adjusted = as.numeric(Ad(xt)),
+      close    = as.numeric(Cl(xt))
+    )
+  }, error = function(e) {
+    message("No se pudo descargar: ", sym, " -> ", conditionMessage(e))
+    NULL
+  })
+}
+
+lista <- lapply(tickers, function(s) {
+  Sys.sleep(1)  # pausa breve para no saturar Yahoo
+  descargar_activo(s)
+})
+
+datos <- bind_rows(lista) %>%
+  filter(date >= fecha_ini, date <= fecha_fin) %>%
+  filter(!is.na(adjusted), !is.na(close)) %>%
+  arrange(date, symbol)
+
+# Verificar qué activos se descargaron
+print(table(datos$symbol))
+setdiff(tickers, unique(datos$symbol))  # activos que fallaron
+
+write_csv(datos, "historicos_bmv_2018_2025.csv")
+write_csv(datos, "C:/Users/apantoja/Downloads/historicos_bmv_2018_2025.csv")
+```
+
+## Limpieza de datos
+
+Quitar rachas mayores a 5,incluyendo rachas de NA.
+
+```{r}
+archivo_in  <- "historicos_bmv_2018_2025.csv"
+archivo_out <- "historicos_bmv_2018_2025_limpio.csv"
+max_racha   <- 5   # Eliminar activos con rachas MAYORES a 5
+
+datos <- read_csv(archivo_in, show_col_types = FALSE)
+
+# Matriz ancha: todas las fechas x activos (los huecos quedan como NA)
+ancho <- datos %>%
+  select(date, symbol, adjusted) %>%
+  complete(date, symbol) %>%
+  arrange(symbol, date)
+```
+
+Longitud de rachas
+
+```{r}
+max_racha_igual <- function(x) {
+  r <- rle(ifelse(is.na(x), "NA", format(x, digits = 15)))
+  max(r$lengths)
+}
+
+# Longitud máxima de racha de NA consecutivos
+max_racha_na <- function(x) {
+  r <- rle(is.na(x))
+  if (any(r$values)) max(r$lengths[r$values]) else 0L
+}
+```
+
+Ejecutar e imprimir 
+
+```{r}
+diagnostico <- ancho %>%
+  group_by(symbol) %>%
+  summarise(
+    racha_max_igual = max_racha_igual(adjusted),
+    racha_max_na    = max_racha_na(adjusted),
+    n_na            = sum(is.na(adjusted)),
+    .groups = "drop"
+  ) %>%
+  mutate(eliminar = racha_max_igual > max_racha | racha_max_na > max_racha)
+
+print(as.data.frame(diagnostico))
+
+eliminados  <- diagnostico$symbol[diagnostico$eliminar]
+conservados <- diagnostico$symbol[!diagnostico$eliminar]
+cat("\nActivos eliminados:", if (length(eliminados)) paste(eliminados, collapse = ", ") else "ninguno", "\n")
+cat("Activos conservados:", length(conservados), "\n")
+
+# Nuevo CSV con el mismo formato, solo con los activos que pasaron el filtro
+limpio <- datos %>%
+  filter(symbol %in% conservados) %>%
+  arrange(date, symbol)
+
+write_csv(limpio, archivo_out)
+write_csv(limpio, "C:/Users/apantoja/Downloads/historicos_bmv_2018_2025_limpio.csv")
+write_csv(diagnostico, "diagnostico_rachas.csv")  # para documentar qué se quitó y por qué
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
